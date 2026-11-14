@@ -13,6 +13,10 @@ export type SearchParams = {
   topResults?: number; // nombre de circuits renvoyés (5 par défaut)
 };
 
+// Garde-fous : le moteur s'arrête seul si la recherche est trop large
+const MAX_VISITED = 300_000; // nombre maximal de chemins explorés
+const MAX_MILLISECONDS = 3000; // durée maximale de la recherche
+
 // Ajoute des jours à une date "AAAA-MM-JJ"
 function addDays(date: string, days: number): string {
   const d = new Date(date);
@@ -34,6 +38,11 @@ function buildIndex(flights: Flight[]): Map<string, Flight> {
 
 const countryOf = new Map(airports.map((a) => [a.code, a.country]));
 
+// Identifie un itinéraire par la suite de ses aéroports
+function routeKey(trip: Trip): string {
+  return [trip.legs[0].flight.from, ...trip.legs.map((l) => l.flight.to)].join(">");
+}
+
 export function findCheapestTrips(
   flights: Flight[],
   params: SearchParams
@@ -43,10 +52,9 @@ export function findCheapestTrips(
   const maxBudget = params.maxBudget ?? Infinity;
   const best: Trip[] = [];
 
-    // Identifie un itinéraire par la suite de ses aéroports
-  function routeKey(trip: Trip): string {
-    return [trip.legs[0].flight.from, ...trip.legs.map((l) => l.flight.to)].join(">");
-  }
+  let visited = 0;
+  let stopped = false;
+  const deadline = Date.now() + MAX_MILLISECONDS;
 
   // Garde un circuit s'il fait partie des moins chers,
   // avec une seule version (la moins chère) par itinéraire
@@ -69,6 +77,13 @@ export function findCheapestTrips(
     total: number,
     usedCountries: Set<string>
   ) {
+    // Garde-fou : trop d'essais ou trop de temps
+    visited++;
+    if (visited > MAX_VISITED || (visited % 1024 === 0 && Date.now() > deadline)) {
+      stopped = true;
+    }
+    if (stopped) return;
+
     // Élagage : on abandonne les chemins déjà trop chers
     if (total >= maxBudget) return;
     if (best.length === topN && total >= best[best.length - 1].totalPrice) {
@@ -126,6 +141,7 @@ export function findCheapestTrips(
       d = addDays(d, 1)
     ) {
       explore([], origin, d, 0, new Set([countryOf.get(origin) ?? ""]));
+      if (stopped) return best;
     }
   }
 
